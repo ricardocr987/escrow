@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, CloseAccount, Token, TokenAccount, Transfer, Mint};
 
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+declare_id!("D7ko992PKYLDKFy3fWCQsePvWF3Z7CmvoDHnViGf8bfm");
 
 #[program]
 pub mod escrow {
@@ -17,12 +17,12 @@ pub mod escrow {
 
         escrow.is_initilized = true; 
         escrow.authority = *ctx.accounts.authority.to_account_info().key;
-        escrow.escrow_token_account_a = *ctx.accounts.maker_token_account_a.to_account_info().key;
-        escrow.escrow_token_account_b = *ctx.accounts.taker_token_account_b.to_account_info().key;
+        escrow.escrow_token_account_a = *ctx.accounts.maker_mint.to_account_info().key;
+        escrow.escrow_token_account_b = *ctx.accounts.taker_mint.to_account_info().key;
         escrow.amount_a = amount_a;
         escrow.amount_b = amount_b;
-        escrow.vault_bump = *ctx.bumps.get("vault").unwrap();
 
+        escrow.vault_bump = *ctx.bumps.get("vault").unwrap();
         // Transfer instruction will incoke the function process_ transfer to tranfer a certain amount od token
         // from a source account to a destination account, important checks:
         // - Neither from and to accounts is frozen
@@ -32,13 +32,13 @@ pub mod escrow {
         // If the transfer instruction is succesful, the source account token amount is decremented by amount and the
         // destination token amount is incremented by amount
         let cpi_accounts = Transfer {
-            from: ctx.accounts.maker_token_account_a.to_account_info().clone(),
-            to: ctx.accounts.vault_account.to_account_info().clone(),
-            authority: ctx.accounts.authority.to_account_info().clone(),
+            from: ctx.accounts.token_account_a.to_account_info(),
+            to: ctx.accounts.vault_account.to_account_info(),
+            authority: ctx.accounts.authority.to_account_info(),
         };
 
         let cpi_ctx = CpiContext::new(
-            ctx.accounts.token_program.to_account_info().clone(), 
+            ctx.accounts.token_program.to_account_info(), 
             cpi_accounts
         );
 
@@ -60,15 +60,15 @@ pub mod escrow {
         let signer = &[&seeds[..]];
 
         let cpi_return_accounts = Transfer {
-            from: ctx.accounts.vault_account.to_account_info().clone(),
-            to: ctx.accounts.token_account_a.to_account_info().clone(),
-            authority: ctx.accounts.token_account_a.to_account_info().clone(),
+            from: ctx.accounts.vault_account.to_account_info(),
+            to: ctx.accounts.token_account_a.to_account_info(),
+            authority: ctx.accounts.vault_account.to_account_info(),
             // Las token Account son su propia autoridad porque son PDAs Accounts,
             // por eso nuestro program pueden firmar
         };
 
         let cpi_return_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info().clone(), 
+            ctx.accounts.token_program.to_account_info(), 
             cpi_return_accounts,
             signer,
         );
@@ -79,14 +79,14 @@ pub mod escrow {
         )?;
 
         let cpi_accounts = CloseAccount {
-            account: ctx.accounts.vault_account.to_account_info().clone(),
-            destination: ctx.accounts.authority.to_account_info().clone(),
-            authority: ctx.accounts.vault_account.to_account_info().clone(),
+            account: ctx.accounts.vault_account.to_account_info(),
+            destination: ctx.accounts.authority.to_account_info(),
+            authority: ctx.accounts.vault_account.to_account_info(),
         };
 
         // Cerrar la vault Account y devolver los lamports al maker porque pagó por
         let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info().clone(), 
+            ctx.accounts.token_program.to_account_info(), 
             cpi_accounts,
             signer,
         );
@@ -113,14 +113,14 @@ pub mod escrow {
         // Transfiere los tokens del taker al maker
         let cpi_initializer_accounts = Transfer {
             // ya hemos comprobado en el context de la instrucción si quiere enviar los tokens correctos
-            from: ctx.accounts.taker_token_account_b.to_account_info().clone(),
-            to: ctx.accounts.offer_makers_taker_tokens.to_account_info().clone(),
+            from: ctx.accounts.taker_token_account_b.to_account_info(),
+            to: ctx.accounts.token_account_b.to_account_info(),
             // el que acepta la oferta tiene que firmar desde el client
-            authority: ctx.accounts.authority.to_account_info().clone(),
+            authority: ctx.accounts.authority.to_account_info(),
         };
 
         let cpi_to_initializer_ctx = CpiContext::new(
-            ctx.accounts.token_program.to_account_info().clone(), 
+            ctx.accounts.token_program.to_account_info(), 
             cpi_initializer_accounts
         );
 
@@ -131,13 +131,13 @@ pub mod escrow {
         // ------------------------------------------------------------------------------------------------------------
         // Transfiere los tokens del maker que están en el vault al taker
         let cpi_taker_accounts = Transfer {
-            from: ctx.accounts.vault_account.to_account_info().clone(),
-            to: ctx.accounts.maker_token_account_a.to_account_info().clone(),
-            authority: ctx.accounts.vault_account.to_account_info().clone(),
+            from: ctx.accounts.vault_account.to_account_info(),
+            to: ctx.accounts.maker_token_account_a.to_account_info(),
+            authority: ctx.accounts.vault_account.to_account_info(),
         };
 
         let cpi_to_taker_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info().clone(), 
+            ctx.accounts.token_program.to_account_info(), 
             cpi_taker_accounts,
             signer,
         );
@@ -149,13 +149,13 @@ pub mod escrow {
 
         // ------------------------------------------------------------------------------------------------------------
         let cpi_close_accounts = CloseAccount {
-            account: ctx.accounts.vault_account.to_account_info().clone(),
-            destination: ctx.accounts.authority.to_account_info().clone(),
-            authority: ctx.accounts.vault_account.to_account_info().clone(),
+            account: ctx.accounts.vault_account.to_account_info(),
+            destination: ctx.accounts.authority.to_account_info(),
+            authority: ctx.accounts.vault_account.to_account_info(),
         };
 
         let cpi_close_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info().clone(), 
+            ctx.accounts.token_program.to_account_info(), 
             cpi_close_accounts,
             signer,
         );
@@ -189,18 +189,18 @@ pub struct Initialize<'info> {
             escrow_account.key().as_ref(),
         ],
         bump,
-        token::mint = maker_token_account_a,
+        token::mint = maker_mint,
         token::authority = vault_account, // Queremos que el mismo program tenga la autoridad sobre el token de la vault
         // Account, por eso necesitamos un PDA aquí y establecer como autiridad su propia dirección
     )]
     pub vault_account: Account<'info, TokenAccount>, // Aquí es donde almacenamos los tokens del maker
 
-    #[account(
-        mut,
-        constraint = maker_token_account_a.amount >= token_account_a_amount,
-    )]
-    pub maker_token_account_a: Account<'info, TokenAccount>,
-    pub taker_token_account_b: Account<'info, TokenAccount>,
+    #[account(mut, constraint = token_account_a.mint == maker_mint.key())]
+    pub token_account_a: Account<'info, TokenAccount>,
+
+    pub maker_mint: Account<'info, Mint>,
+    pub taker_mint: Account<'info, Mint>,
+
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
     pub rent: Sysvar<'info, Rent>,
@@ -258,6 +258,10 @@ pub struct Exchange<'info> {
 
     #[account(mut)]
     pub authority: Signer<'info>, // offer_taker, el que acepta la oferta
+    #[account(
+        mut, 
+        constraint = escrow_account.authority == offer_maker.key()
+    )]/// CHECK:
     pub offer_maker: AccountInfo<'info>, // el que crea el escrow
 
     #[account(
@@ -265,7 +269,7 @@ pub struct Exchange<'info> {
         associated_token::mint = taker_mint,
         associated_token::authority = offer_maker,
     )]
-    pub offer_makers_taker_tokens: Box<Account<'info, TokenAccount>>,
+    pub token_account_b: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,

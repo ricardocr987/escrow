@@ -1,11 +1,50 @@
-import * as anchor from "@project-serum/anchor";
-import { Program, BN, IdlAccounts,  } from "@project-serum/anchor";
-import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID, Token } from "@solana/spl-token";
-import { assert } from "chai";
 import { Escrow } from "../target/types/escrow";
+import * as anchor from '@project-serum/anchor';
+import * as spl from '@solana/spl-token';
+import { Program } from '@project-serum/anchor';
+import * as assert from 'assert';
+import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
 
-type EscrowAccount = IdlAccounts<Escrow>["escrowAccount"];
+interface Wallet {
+  signTransaction(tx: Transaction): Promise<Transaction>;
+  signAllTransactions(txs: Transaction[]): Promise<Transaction[]>;
+  publicKey: PublicKey;
+}
+
+class NodeWallet implements Wallet {
+  constructor(readonly payer: Keypair) {}
+
+  static local(): NodeWallet {
+    const process = require("process");
+    const payer = Keypair.fromSecretKey(
+      Buffer.from(
+        JSON.parse(
+          require("fs").readFileSync(process.env.ANCHOR_WALLET, {
+            encoding: "utf-8",
+          })
+        )
+      )
+    );
+    return new NodeWallet(payer);
+  }
+
+  async signTransaction(tx: Transaction): Promise<Transaction> {
+    tx.partialSign(this.payer);
+    return tx;
+  }
+
+  async signAllTransactions(txs: Transaction[]): Promise<Transaction[]> {
+    return txs.map((t) => {
+      t.partialSign(this.payer);
+      return t;
+    });
+  }
+
+  get publicKey(): PublicKey {
+    return this.payer.publicKey;
+  }
+}
+
 
 describe("escrow", () => {
   const provider = anchor.Provider.env();
@@ -13,234 +52,362 @@ describe("escrow", () => {
 
   const program = anchor.workspace.Escrow as Program<Escrow>;
 
-  let mintA: Token = null;
-  let mintB: Token = null;
-  let initializerTokenAccountA: PublicKey = null;
-  let initializerTokenAccountB: PublicKey = null;
-  let takerTokenAccountA: PublicKey = null;
-  let takerTokenAccountB: PublicKey = null;
-  let pda: PublicKey = null;
+  let makerMint: spl.Token;
+  let takerMint: spl.Token;
+  let randomOtherMint: spl.Token;
+  let makerTokenAccountA: anchor.web3.PublicKey;
+  let takerTokenAccountB: anchor.web3.PublicKey;
+  let makerTokenAccountB: anchor.web3.PublicKey;
+  let takerTokenAccountA: anchor.web3.PublicKey;
+  let randomTokens: anchor.web3.PublicKey;
+  let hackersTakerTokens: anchor.web3.PublicKey;
+  const offerTaker = anchor.web3.Keypair.generate();
+  const hacker = anchor.web3.Keypair.generate();
 
-  const takerAmount = 1000;
-  const initializerAmount = 500;
+  before(async () => {
+    const wallet = program.provider.wallet as NodeWallet;
 
-  const escrowAccount = Keypair.generate();
-  const payer = Keypair.generate();
-  const mintAuthority = Keypair.generate();
-
-  it("Initialise escrow state", async () => {
-    // Airdropping tokens to a payer.
-    await provider.connection.confirmTransaction(
-      await provider.connection.requestAirdrop(payer.publicKey, 10000000000),
-      "confirmed"
-    );
-
-    mintA = await Token.createMint(
-      provider.connection,
-      payer,
-      mintAuthority.publicKey,
-      null,
+    makerMint = await spl.Token.createMint(
+      program.provider.connection,
+      wallet.payer,
+      wallet.publicKey,
+      wallet.publicKey,
       0,
-      TOKEN_PROGRAM_ID
+      spl.TOKEN_PROGRAM_ID
     );
 
-    mintB = await Token.createMint(
-      provider.connection,
-      payer,
-      mintAuthority.publicKey,
-      null,
+    takerMint = await spl.Token.createMint(
+      program.provider.connection,
+      wallet.payer,
+      wallet.publicKey,
+      wallet.publicKey,
       0,
-      TOKEN_PROGRAM_ID
+      spl.TOKEN_PROGRAM_ID
     );
 
-    initializerTokenAccountA = await mintA.createAccount(
-      provider.wallet.publicKey
-    );
-    takerTokenAccountA = await mintA.createAccount(provider.wallet.publicKey);
-
-    initializerTokenAccountB = await mintB.createAccount(
-      provider.wallet.publicKey
-    );
-    takerTokenAccountB = await mintB.createAccount(provider.wallet.publicKey);
-
-    await mintA.mintTo(
-      initializerTokenAccountA,
-      mintAuthority.publicKey,
-      [mintAuthority],
-      initializerAmount
+    randomOtherMint = await spl.Token.createMint(
+      program.provider.connection,
+      wallet.payer,
+      wallet.publicKey,
+      wallet.publicKey,
+      0,
+      spl.TOKEN_PROGRAM_ID
     );
 
-    await mintB.mintTo(
-      takerTokenAccountB,
-      mintAuthority.publicKey,
-      [mintAuthority],
-      takerAmount
+    makerTokenAccountA = await makerMint.createAssociatedTokenAccount(
+      program.provider.wallet.publicKey
+    );
+    takerTokenAccountB = await takerMint.createAssociatedTokenAccount(
+      program.provider.wallet.publicKey
+    );
+    makerTokenAccountB = await makerMint.createAssociatedTokenAccount(
+      offerTaker.publicKey
+    );
+    takerTokenAccountA = await takerMint.createAssociatedTokenAccount(
+      offerTaker.publicKey
+    );
+    randomTokens = await randomOtherMint.createAssociatedTokenAccount(
+      offerTaker.publicKey
+    );
+    hackersTakerTokens = await takerMint.createAssociatedTokenAccount(
+      hacker.publicKey
     );
 
-    let _initializerTokenAccountA = await mintA.getAccountInfo(
-      initializerTokenAccountA
-    );
-    let _takerTokenAccountB = await mintB.getAccountInfo(takerTokenAccountB);
-
-    assert.strictEqual(
-      _initializerTokenAccountA.amount.toNumber(),
-      initializerAmount
-    );
-    assert.strictEqual(_takerTokenAccountB.amount.toNumber(), takerAmount);
+    await makerMint.mintTo(makerTokenAccountA, program.provider.wallet.publicKey, [], 1000);
+    await takerMint.mintTo(takerTokenAccountB, program.provider.wallet.publicKey, [], 1000);
   });
 
-  it("Initialize escrow", async () => {
-    await program.rpc.initializeEscrow(
-      new BN(initializerAmount),
-      new BN(takerAmount),
-      {
-        accounts: {
-          initializer: provider.wallet.publicKey,
-          initializerDepositTokenAccount: initializerTokenAccountA,
-          initializerReceiveTokenAccount: initializerTokenAccountB,
-          escrowAccount: escrowAccount.publicKey,
-          systemProgram: SystemProgram.programId,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        },
-        signers: [escrowAccount],
-      }
-    );
+  it("lets you make and accept offers", async () => {
+    const escrow = anchor.web3.Keypair.generate();
 
-    // Get the PDA that is assigned authority to token account.
-    const [_pda, _nonce] = await PublicKey.findProgramAddress(
-      [Buffer.from(anchor.utils.bytes.utf8.encode("escrow"))],
+    const [escrowedMakerTokens, escrowedMakerTokensBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [escrow.publicKey.toBuffer()],
       program.programId
     );
 
-    pda = _pda;
-
-    let _initializerTokenAccountA = await mintA.getAccountInfo(
-      initializerTokenAccountA
-    );
-
-    let _escrowAccount: EscrowAccount =
-      await program.account.escrowAccount.fetch(escrowAccount.publicKey);
-
-    // Check that the new owner is the PDA.
-    assert.isTrue(_initializerTokenAccountA.owner.equals(pda));
-
-    // Check that the values in the escrow account match what we expect.
-    assert.isTrue(
-      _escrowAccount.initializerKey.equals(provider.wallet.publicKey)
-    );
-    assert.strictEqual(
-      _escrowAccount.initializerAmount.toNumber(),
-      initializerAmount
-    );
-    assert.strictEqual(_escrowAccount.takerAmount.toNumber(), takerAmount);
-    assert.isTrue(
-      _escrowAccount.initializerDepositTokenAccount.equals(
-        initializerTokenAccountA
-      )
-    );
-    assert.isTrue(
-      _escrowAccount.initializerReceiveTokenAccount.equals(
-        initializerTokenAccountB
-      )
-    );
-  });
-
-  it("Exchange escrow", async () => {
-    await program.rpc.exchange({
-      accounts: {
-        taker: provider.wallet.publicKey,
-        takerDepositTokenAccount: takerTokenAccountB,
-        takerReceiveTokenAccount: takerTokenAccountA,
-        pdaDepositTokenAccount: initializerTokenAccountA,
-        initializerReceiveTokenAccount: initializerTokenAccountB,
-        initializerMainAccount: provider.wallet.publicKey,
-        escrowAccount: escrowAccount.publicKey,
-        pdaAccount: pda,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      },
-    });
-
-    let _takerTokenAccountA = await mintA.getAccountInfo(takerTokenAccountA);
-    let _takerTokenAccountB = await mintB.getAccountInfo(takerTokenAccountB);
-    let _initializerTokenAccountA = await mintA.getAccountInfo(
-      initializerTokenAccountA
-    );
-    let _initializerTokenAccountB = await mintB.getAccountInfo(
-      initializerTokenAccountB
-    );
-
-    // Check that the initializer gets back ownership of their token account.
-    assert.isTrue(_takerTokenAccountA.owner.equals(provider.wallet.publicKey));
-
-    assert.strictEqual(
-      _takerTokenAccountA.amount.toNumber(),
-      initializerAmount
-    );
-    assert.strictEqual(_initializerTokenAccountA.amount.toNumber(), 0);
-    assert.strictEqual(
-      _initializerTokenAccountB.amount.toNumber(),
-      takerAmount
-    );
-    assert.strictEqual(_takerTokenAccountB.amount.toNumber(), 0);
-  });
-
-  let newEscrow = Keypair.generate();
-
-  it("Initialize escrow and cancel escrow", async () => {
-    // Put back tokens into initializer token A account.
-    await mintA.mintTo(
-      initializerTokenAccountA,
-      mintAuthority.publicKey,
-      [mintAuthority],
-      initializerAmount
-    );
-
-    await program.rpc.initializeEscrow(
-      new BN(initializerAmount),
-      new BN(takerAmount),
+    await program.rpc.initialize(
+      new anchor.BN(100),
+      new anchor.BN(200),
       {
         accounts: {
-          initializer: provider.wallet.publicKey,
-          initializerDepositTokenAccount: initializerTokenAccountA,
-          initializerReceiveTokenAccount: initializerTokenAccountB,
-          escrowAccount: newEscrow.publicKey,
-          systemProgram: SystemProgram.programId,
-          tokenProgram: TOKEN_PROGRAM_ID,
+          escrowAccount: escrow.publicKey,
+          authority: program.provider.wallet.publicKey,
+          vaultAccount: escrowedMakerTokens,
+          tokenAccountA: makerTokenAccountA,
+          makerMint: makerMint.publicKey,
+          takerMint: takerMint.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          tokenProgram: spl.TOKEN_PROGRAM_ID,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
         },
-        signers: [newEscrow],
+        signers: [escrow]
       }
     );
 
-    let _initializerTokenAccountA = await mintA.getAccountInfo(
-      initializerTokenAccountA
-    );
-
-    // Check that the new owner is the PDA.
-    assert.isTrue(_initializerTokenAccountA.owner.equals(pda));
-
-    // Cancel the escrow.
-    await program.rpc.cancelEscrow({
+    // Check the escrow has the right amount.
+    assert.equal(100, (await makerMint.getAccountInfo(escrowedMakerTokens)).amount.toNumber());
+    /*
+    await program.rpc.exchange({
       accounts: {
-        initializer: provider.wallet.publicKey,
-        pdaDepositTokenAccount: initializerTokenAccountA,
-        pdaAccount: pda,
-        escrowAccount: newEscrow.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        escrowAccount: escrow.publicKey,
+        vaultAccount: escrowedMakerTokens,
+        authority: program.provider.wallet.publicKey,
+        offerMaker: offerTaker.publicKey,
+        tokenAccountB: takerTokenAccountB,
+        takerTokenAccountB: takerTokenAccountA,
+        makerTokenAccountA: makerTokenAccountB,
+        takerMint: takerMint.publicKey,
+        tokenProgram: spl.TOKEN_PROGRAM_ID,
       },
+      signers: [offerTaker]
     });
 
-    // Check the final owner should be the provider public key.
-    _initializerTokenAccountA = await mintA.getAccountInfo(
-      initializerTokenAccountA
-    );
-    assert.isTrue(
-      _initializerTokenAccountA.owner.equals(provider.wallet.publicKey)
+    assert.equal(100, (await makerMint.getAccountInfo(makerTokenAccountA)).amount.toNumber());
+    assert.equal(200, (await takerMint.getAccountInfo(takerTokenAccountB)).amount.toNumber());
+
+    // The underlying offer account got closed when the offer got cancelled.
+    assert.equal(null, await program.provider.connection.getAccountInfo(escrow.publicKey));
+    // The escrow account got closed when the offer got accepted.
+    assert.equal(null, await program.provider.connection.getAccountInfo(escrowedMakerTokens));*/
+  });
+/*
+  it("lets you make and cancel offers", async () => {
+    const escrow = anchor.web3.Keypair.generate();
+
+    const [escrowedMakerTokens, escrowedMakerTokensBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [escrow.publicKey.toBuffer()],
+      program.programId
     );
 
-    // Check all the funds are still there.
-    assert.strictEqual(
-      _initializerTokenAccountA.amount.toNumber(),
-      initializerAmount
-    );
+    const startingTokenBalance = (await makerMint.getAccountInfo(offerMakersMakerTokens)).amount.toNumber();
+
+    await program.rpc.initialize(
+      new anchor.BN(100),
+      new anchor.BN(200),
+      {
+        accounts: {
+          escrowAccount: escrow.publicKey,
+          authority: program.provider.wallet.publicKey,
+          vaultAccount: escrowedMakerTokens,
+          offerMakersMakerTokens: offerMakersMakerTokens,
+          makerMint: makerMint.publicKey,
+          takerMint: takerMint.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          tokenProgram: spl.TOKEN_PROGRAM_ID,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      },
+      signers: [escrow]
+    });
+
+    // Check the escrow has the right amount.
+    assert.equal(100, (await makerMint.getAccountInfo(escrowedMakerTokens)).amount.toNumber());
+
+    await program.rpc.cancel({
+      accounts: {
+        escrowAccount: escrow.publicKey,
+        vaultAccount: escrowedMakerTokens,
+        authority: program.provider.wallet.publicKey,
+        offerMakersMakerTokens: offerMakersMakerTokens,
+        tokenProgram: spl.TOKEN_PROGRAM_ID
+      }
+    });
+
+
+    // The underlying offer account got closed when the offer got cancelled.
+    assert.equal(null, await program.provider.connection.getAccountInfo(escrow.publicKey));
+    // The escrow account got closed when the offer got cancelled.
+    assert.equal(null, await program.provider.connection.getAccountInfo(escrowedMakerTokens));
+
+    // The offer maker got their tokens back.
+    assert.equal(startingTokenBalance, (await makerMint.getAccountInfo(offerMakersMakerTokens)).amount.toNumber())
+
+    // See what happens if we accept despite already canceling...
+    try {
+      await program.rpc.exchange({
+        accounts: {
+          escrowAccount: escrow.publicKey,
+          vaultAccount: escrowedMakerTokens,
+          authority: program.provider.wallet.publicKey,
+          offerMaker: offerTaker.publicKey,
+          offerMakersTakerTokens: offerMakersTakerTokens,
+          takerTokenAccountB: offerTakersTakerTokens,
+          makerTokenAccountA: offerTakersMakerTokens,
+          takerMint: takerMint.publicKey,
+          tokenProgram: spl.TOKEN_PROGRAM_ID,
+        },
+        signers: [offerTaker]
+      });
+      assert.fail("Accepting a previously-cancelled offer should have failed");
+    } catch (e) {
+      // The offer account got closed when we accepted the offer, so trying to
+      // use it again results in "not owned by the program" error (as expected).
+      assert.equal(0xa7, e.code);
+    }
   });
+
+  it("won't let you accept an offer with the wrong kind of tokens", async () => {
+    const escrow = anchor.web3.Keypair.generate();
+
+    const [escrowedMakerTokens, escrowedMakerTokensBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [escrow.publicKey.toBuffer()],
+      program.programId
+    );
+
+    await program.rpc.initialize(
+      new anchor.BN(100),
+      new anchor.BN(200),
+      {
+        accounts: {
+          escrowAccount: escrow.publicKey,
+          authority: program.provider.wallet.publicKey,
+          vaultAccount: escrowedMakerTokens,
+          offerMakersMakerTokens: offerMakersMakerTokens,
+          makerMint: makerMint.publicKey,
+          takerMint: takerMint.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          tokenProgram: spl.TOKEN_PROGRAM_ID,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      },
+      signers: [escrow]
+    });
+
+    // Check the escrow has the right amount.
+    assert.equal(100, (await makerMint.getAccountInfo(escrowedMakerTokens)).amount.toNumber());
+
+    try {
+      await program.rpc.exchange({
+        accounts: {
+          escrowAccount: escrow.publicKey,
+          vaultAccount: escrowedMakerTokens,
+          authority: program.provider.wallet.publicKey,
+          offerMaker: offerTaker.publicKey,
+          offerMakersTakerTokens: offerMakersTakerTokens,
+          takerTokenAccountB: offerTakersTakerTokens,
+          makerTokenAccountA: offerTakersMakerTokens,
+          takerMint: takerMint.publicKey,
+          tokenProgram: spl.TOKEN_PROGRAM_ID,
+        },
+        signers: [offerTaker]
+      });
+      assert.fail("Shouldn't have been able to accept an offer with the wrong type of tokens");
+    } catch (e) {
+      // Should trigger a constraint
+      assert.equal(0x8f, e.code);
+    }
+
+    // The underlying offer account got closed when the offer got cancelled.
+    assert.notEqual(null, await program.provider.connection.getAccountInfo(escrow.publicKey));
+    // The escrow account got closed when the offer got accepted.
+    assert.notEqual(null, await program.provider.connection.getAccountInfo(escrowedMakerTokens));
+  });
+
+  it("won't let you accept an offer with the wrong amount", async () => {
+    const escrow = anchor.web3.Keypair.generate();
+
+    const [escrowedMakerTokens, escrowedMakerTokensBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [escrow.publicKey.toBuffer()],
+      program.programId
+    );
+    await program.rpc.initialize(
+      new anchor.BN(100),
+      new anchor.BN(200),
+      {
+        accounts: {
+          escrowAccount: escrow.publicKey,
+          authority: program.provider.wallet.publicKey,
+          vaultAccount: escrowedMakerTokens,
+          offerMakersMakerTokens: offerMakersMakerTokens,
+          makerMint: makerMint.publicKey,
+          takerMint: takerMint.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          tokenProgram: spl.TOKEN_PROGRAM_ID,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      },
+      signers: [escrow]
+    });
+
+    // Check the escrow has the right amount.
+    assert.equal(100, (await makerMint.getAccountInfo(escrowedMakerTokens)).amount.toNumber());
+
+    try {
+      await program.rpc.exchange({
+        accounts: {
+          escrowAccount: escrow.publicKey,
+          vaultAccount: escrowedMakerTokens,
+          authority: program.provider.wallet.publicKey,
+          offerMaker: offerTaker.publicKey,
+          offerMakersTakerTokens: offerMakersTakerTokens,
+          takerTokenAccountB: offerTakersTakerTokens,
+          makerTokenAccountA: offerTakersMakerTokens,
+          takerMint: takerMint.publicKey,
+          tokenProgram: spl.TOKEN_PROGRAM_ID,
+        },
+        signers: [offerTaker]
+      });
+      assert.fail("Shouldn't have been able to accept an offer with too few tokens");
+    } catch (e) {
+      assert.ok(e.logs.some(log => log.includes("insufficient funds")));
+    }
+
+    // The underlying offer account got closed when the offer got cancelled.
+    assert.notEqual(null, await program.provider.connection.getAccountInfo(escrow.publicKey));
+    // The escrow account got closed when the offer got accepted.
+    assert.notEqual(null, await program.provider.connection.getAccountInfo(escrowedMakerTokens));
+  });
+
+  it("won't let you accept an offer with a token account that doesn't belong to the maker", async () => {
+    const escrow = anchor.web3.Keypair.generate();
+
+    const [escrowedMakerTokens, escrowedMakerTokensBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [escrow.publicKey.toBuffer()],
+      program.programId
+    );
+
+    await program.rpc.initialize(
+      new anchor.BN(100),
+      new anchor.BN(200),
+      {
+        accounts: {
+          escrowAccount: escrow.publicKey,
+          authority: program.provider.wallet.publicKey,
+          vaultAccount: escrowedMakerTokens,
+          offerMakersMakerTokens: offerMakersMakerTokens,
+          makerMint: makerMint.publicKey,
+          takerMint: takerMint.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          tokenProgram: spl.TOKEN_PROGRAM_ID,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      },
+      signers: [escrow]
+    });
+
+    // Check the escrow has the right amount.
+    assert.equal(100, (await makerMint.getAccountInfo(escrowedMakerTokens)).amount.toNumber());
+
+    try {
+      await program.rpc.exchange({
+        accounts: {
+          escrowAccount: escrow.publicKey,
+          vaultAccount: escrowedMakerTokens,
+          authority: program.provider.wallet.publicKey,
+          offerMaker: offerTaker.publicKey,
+          offerMakersTakerTokens: offerMakersTakerTokens,
+          takerTokenAccountB: offerTakersTakerTokens,
+          makerTokenAccountA: offerTakersMakerTokens,
+          takerMint: takerMint.publicKey,
+          tokenProgram: spl.TOKEN_PROGRAM_ID,
+        },
+        signers: [offerTaker]
+      });
+      assert.fail("Shouldn't have been able to accept an offer with a token account that doesn't belong to the maker");
+    } catch (e) {
+      // Should trigger an associated token constraint
+      assert.equal(0x95, e.code);
+    }
+
+    // The underlying offer account got closed when the offer got cancelled.
+    assert.notEqual(null, await program.provider.connection.getAccountInfo(escrow.publicKey));
+    // The escrow account got closed when the offer got accepted.
+    assert.notEqual(null, await program.provider.connection.getAccountInfo(escrowedMakerTokens));
+  });*/
 });
