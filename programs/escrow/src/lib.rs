@@ -216,10 +216,8 @@ pub struct Cancel<'info> {
 
     #[account(
         mut,
-        seeds = [
-            escrow_account.key().as_ref(),
-        ],
-        bump,
+        seeds = [escrow_account.key().as_ref()],
+        bump
     )]
     pub vault_account: Account<'info, TokenAccount>,
 
@@ -239,9 +237,7 @@ pub struct Exchange<'info> {
 
     #[account(
         mut,
-        seeds = [
-            escrow_account.key().as_ref(),
-        ],
+        seeds = [escrow_account.key().as_ref()],
         bump,
     )]
     pub vault_account: Account<'info, TokenAccount>,
