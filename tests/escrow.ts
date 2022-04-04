@@ -61,6 +61,7 @@ describe("escrow", () => {
   let takerTokenAccountA: anchor.web3.PublicKey;
   let offerTakersRandomOtherTokens: anchor.web3.PublicKey;
   let hackersTakerTokens: anchor.web3.PublicKey;
+  const maker = anchor.web3.Keypair.generate();
   const taker = anchor.web3.Keypair.generate();
   const hacker = anchor.web3.Keypair.generate();
 
@@ -91,10 +92,10 @@ describe("escrow", () => {
       spl.TOKEN_PROGRAM_ID
     );
     makerTokenAccountA = await makerMint.createAssociatedTokenAccount(
-      program.provider.wallet.publicKey
+      maker.publicKey
     );
     makerTokenAccountB = await takerMint.createAssociatedTokenAccount(
-      program.provider.wallet.publicKey
+      maker.publicKey
     );
     takerTokenAccountA = await makerMint.createAssociatedTokenAccount(
       taker.publicKey
@@ -118,7 +119,7 @@ describe("escrow", () => {
 
     const [vaultAuthority, vaultAuthorityBump] = await anchor.web3.PublicKey.findProgramAddress(
       [
-        program.provider.wallet.publicKey.toBuffer(),
+        maker.publicKey.toBuffer(),
         escrow.publicKey.toBuffer()
       ],
       program.programId
@@ -135,7 +136,7 @@ describe("escrow", () => {
           escrowAccount: escrow.publicKey,
           vaultAuthority: vaultAuthority,
           vaultAccount: vault,
-          authority: program.provider.wallet.publicKey,
+          authority: maker.publicKey,
           makerTokenAccountA: makerTokenAccountA,
           makerMint: makerMint.publicKey,
           takerMint: takerMint.publicKey,
@@ -143,13 +144,13 @@ describe("escrow", () => {
           tokenProgram: spl.TOKEN_PROGRAM_ID,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
         })
-          .signers([escrow])
+          .signers([maker])
             .rpc();
 
     // Check the escrow has the right amount.
     assert.equal(100, (await makerMint.getAccountInfo(vault)).amount.toNumber());
   
-    await program.methods
+    /*await program.methods
       .exchange()
         .accounts({
           escrowAccount: escrow.publicKey,
@@ -172,10 +173,10 @@ describe("escrow", () => {
     // The underlying offer account got closed when the offer got cancelled.
     assert.equal(null, await program.provider.connection.getAccountInfo(escrow.publicKey));
     // The escrow account got closed when the offer got accepted.
-    assert.equal(null, await program.provider.connection.getAccountInfo(vault));
+    assert.equal(null, await program.provider.connection.getAccountInfo(vault));*/
   });
 
-  it("lets you make and cancel offers", async () => {
+  /*it("lets you make and cancel offers", async () => {
     const escrow = anchor.web3.Keypair.generate();
 
     const [vaultAuthority, vaultAuthorityBump] = await anchor.web3.PublicKey.findProgramAddress(
@@ -224,7 +225,8 @@ describe("escrow", () => {
         tokenProgram: spl.TOKEN_PROGRAM_ID
       });
 
-      console.log((await makerMint.getAccountInfo(vault)).amount.toNumber());/*
+      console.log((await makerMint.getAccountInfo(vault)).amount.toNumber());*/
+      /*
     // The underlying escrow account got closed when the offer got cancelled.
     assert.equal(null, await program.provider.connection.getAccountInfo(escrow.publicKey));
     // The vault account got closed when the offer got cancelled.
@@ -255,8 +257,8 @@ describe("escrow", () => {
       // The offer account got closed when we accepted the offer, so trying to
       // use it again results in "not owned by the program" error (as expected).
       assert.equal(0xa7, e.code);
-    }*/
-  });
+    }
+  });*/
   /*it("won't let you accept an offer with the wrong kind of tokens", async () => {
     const escrow = anchor.web3.Keypair.generate();
 

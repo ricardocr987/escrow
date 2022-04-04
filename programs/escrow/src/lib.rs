@@ -102,6 +102,22 @@ pub mod escrow {
                 token::close_account(
                     cpi_ctx
                 )?;
+                // Cerramos vault_authority
+                let cpi_accounts = CloseAccount {
+                    account: ctx.accounts.vault_authority.to_account_info(),
+                    destination: ctx.accounts.authority.to_account_info(),
+                    authority: ctx.accounts.vault_authority.to_account_info(),
+                };
+                
+                let cpi_ctx = CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(), 
+                    cpi_accounts,
+                    signer,
+                );
+
+                token::close_account(
+                    cpi_ctx
+                )?;
             }
         }
 
@@ -173,6 +189,23 @@ pub mod escrow {
 
             token::close_account(
                 cpi_close_ctx,
+            )?;
+
+            // Cerramos vault_authority
+            let cpi_accounts = CloseAccount {
+                account: ctx.accounts.vault_authority.to_account_info(),
+                destination: ctx.accounts.maker.to_account_info(),
+                authority: ctx.accounts.vault_authority.to_account_info(),
+            };
+            
+            let cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(), 
+                cpi_accounts,
+                signer,
+            );
+
+            token::close_account(
+                cpi_ctx
             )?;
         }
         Ok(())
