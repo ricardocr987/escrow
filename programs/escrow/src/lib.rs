@@ -61,7 +61,7 @@ pub mod escrow {
             to: ctx.accounts.token_account_a.to_account_info(),
             authority: ctx.accounts.vault_account.to_account_info(),
             // Las token Account son su propia autoridad porque son PDAs Accounts,
-            // por eso nuestro program pueden firmar
+            // por eso nuestro program pueden firmar los CPIs
         };
 
         let cpi_return_ctx = CpiContext::new_with_signer(
@@ -74,23 +74,25 @@ pub mod escrow {
             cpi_return_ctx,
             ctx.accounts.vault_account.amount,
         )?;
+        
+        if ctx.accounts.vault_account.amount == 0 {
+            // Cerrar la vault Account y devolver los lamports al maker
+            let cpi_accounts = CloseAccount {
+                account: ctx.accounts.vault_account.to_account_info(),
+                destination: ctx.accounts.authority.to_account_info(),
+                authority: ctx.accounts.vault_account.to_account_info(),
+            };
+            
+            let cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(), 
+                cpi_accounts,
+                signer,
+            );
 
-        let cpi_accounts = CloseAccount {
-            account: ctx.accounts.vault_account.to_account_info(),
-            destination: ctx.accounts.authority.to_account_info(),
-            authority: ctx.accounts.vault_account.to_account_info(),
-        };
-
-        // Cerrar la vault Account y devolver los lamports al maker porque pagó por
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(), 
-            cpi_accounts,
-            signer,
-        );
-
-        token::close_account(
-            cpi_ctx
-        )?;
+            token::close_account(
+                cpi_ctx
+            )?;
+        }
 
         Ok(())
     }
@@ -194,6 +196,7 @@ pub struct Initialize<'info> {
     )]
     pub vault_account: Account<'info, TokenAccount>, // Aquí es donde almacenamos los tokens del maker
     
+
     pub maker_mint: Account<'info, Mint>, // Necesario para crear el vault
     pub taker_mint: Account<'info, Mint>, // Lo queremos en el context para almacenarlo en el Escrow Account
     
@@ -217,7 +220,7 @@ pub struct Cancel<'info> {
     #[account(
         mut,
         seeds = [escrow_account.key().as_ref()],
-        bump
+        bump = escrow_account.vault_bump,
     )]
     pub vault_account: Account<'info, TokenAccount>,
 
@@ -238,7 +241,7 @@ pub struct Exchange<'info> {
     #[account(
         mut,
         seeds = [escrow_account.key().as_ref()],
-        bump,
+        bump = escrow_account.vault_bump,
     )]
     pub vault_account: Account<'info, TokenAccount>,
     /// CHECK:
