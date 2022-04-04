@@ -116,18 +116,27 @@ describe("escrow", () => {
   it("lets you make and accept offers", async () => {
     const escrow = anchor.web3.Keypair.generate();
 
-    const [escrowedMakerTokens, escrowedMakerTokensBump] = await anchor.web3.PublicKey.findProgramAddress(
+    const [vaultAuthority, vaultAuthorityBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [
+        program.provider.wallet.publicKey.toBuffer(),
+        escrow.publicKey.toBuffer()
+      ],
+      program.programId
+    );
+
+    const [vault, vaultBump] = await anchor.web3.PublicKey.findProgramAddress(
       [escrow.publicKey.toBuffer()],
       program.programId
     );
 
     await program.methods
-      .initialize(escrowedMakerTokensBump, new anchor.BN(100),new anchor.BN(200))
+      .initialize(vaultBump, vaultAuthorityBump, new anchor.BN(100),new anchor.BN(200))
         .accounts({
           escrowAccount: escrow.publicKey,
+          vaultAuthority: vaultAuthority,
+          vaultAccount: vault,
           authority: program.provider.wallet.publicKey,
           makerTokenAccountA: makerTokenAccountA,
-          vaultAccount: escrowedMakerTokens,
           makerMint: makerMint.publicKey,
           takerMint: takerMint.publicKey,
           systemProgram: anchor.web3.SystemProgram.programId,
@@ -138,13 +147,14 @@ describe("escrow", () => {
             .rpc();
 
     // Check the escrow has the right amount.
-    assert.equal(100, (await makerMint.getAccountInfo(escrowedMakerTokens)).amount.toNumber());
+    assert.equal(100, (await makerMint.getAccountInfo(vault)).amount.toNumber());
   
     await program.methods
       .exchange()
         .accounts({
           escrowAccount: escrow.publicKey,
-          vaultAccount: escrowedMakerTokens,
+          vaultAuthority: vaultAuthority,
+          vaultAccount: vault,
           maker: program.provider.wallet.publicKey,
           authority: taker.publicKey,
           makerTokenAccountB: makerTokenAccountB,
@@ -162,13 +172,21 @@ describe("escrow", () => {
     // The underlying offer account got closed when the offer got cancelled.
     assert.equal(null, await program.provider.connection.getAccountInfo(escrow.publicKey));
     // The escrow account got closed when the offer got accepted.
-    assert.equal(null, await program.provider.connection.getAccountInfo(escrowedMakerTokens));
+    assert.equal(null, await program.provider.connection.getAccountInfo(vault));
   });
 
   it("lets you make and cancel offers", async () => {
     const escrow = anchor.web3.Keypair.generate();
 
-    const [escrowedMakerTokens, escrowedMakerTokensBump] = await anchor.web3.PublicKey.findProgramAddress(
+    const [vaultAuthority, vaultAuthorityBump] = await anchor.web3.PublicKey.findProgramAddress(
+      [
+        program.provider.wallet.publicKey.toBuffer(),
+        escrow.publicKey.toBuffer()
+      ],
+      program.programId
+    );
+
+    const [vault, vaultBump] = await anchor.web3.PublicKey.findProgramAddress(
       [escrow.publicKey.toBuffer()],
       program.programId
     );
@@ -176,12 +194,13 @@ describe("escrow", () => {
     const startingTokenBalance = (await makerMint.getAccountInfo(makerTokenAccountA)).amount.toNumber();
 
     await program.methods
-      .initialize(escrowedMakerTokensBump, new anchor.BN(100),new anchor.BN(200))
+      .initialize(vaultBump, vaultAuthorityBump, new anchor.BN(100),new anchor.BN(200))
         .accounts({
           escrowAccount: escrow.publicKey,
+          vaultAuthority: vaultAuthority,
+          vaultAccount: vault,
           authority: program.provider.wallet.publicKey,
           makerTokenAccountA: makerTokenAccountA,
-          vaultAccount: escrowedMakerTokens,
           makerMint: makerMint.publicKey,
           takerMint: takerMint.publicKey,
           systemProgram: anchor.web3.SystemProgram.programId,
@@ -192,19 +211,20 @@ describe("escrow", () => {
             .rpc();
 
     // Check the escrow has the right amount.
-    assert.equal(100, (await makerMint.getAccountInfo(escrowedMakerTokens)).amount.toNumber());
+    assert.equal(100, (await makerMint.getAccountInfo(vault)).amount.toNumber());
 
     await program.methods
     .cancel()
       .accounts({
         escrowAccount: escrow.publicKey,
+        vaultAuthority: vaultAuthority,
+        vaultAccount: vault,
         authority: program.provider.wallet.publicKey,
-        vaultAccount: escrowedMakerTokens,
         tokenAccountA: makerTokenAccountA,
         tokenProgram: spl.TOKEN_PROGRAM_ID
       });
 
-      console.log((await makerMint.getAccountInfo(escrowedMakerTokens)).amount.toNumber());/*
+      console.log((await makerMint.getAccountInfo(vault)).amount.toNumber());/*
     // The underlying escrow account got closed when the offer got cancelled.
     assert.equal(null, await program.provider.connection.getAccountInfo(escrow.publicKey));
     // The vault account got closed when the offer got cancelled.
