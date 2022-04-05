@@ -18,8 +18,10 @@ pub mod escrow {
 
         let escrow = &mut ctx.accounts.escrow_account;
 
-        escrow.maker = ctx.accounts.authority.to_account_info().key();
-        escrow.mint_b = ctx.accounts.mint_b.to_account_info().key();
+        escrow.maker = ctx.accounts.authority.key();
+        escrow.mint_a = ctx.accounts.mint_a.key();
+        escrow.mint_b = ctx.accounts.mint_b.key();
+        escrow.amount_a = amount_a;
         escrow.amount_b = amount_b;
         escrow.id = id;
         escrow.escrow_bump = escrow_bump;
@@ -78,7 +80,7 @@ pub mod escrow {
             signer,
         );
 
-        token::transfer(cpi_ctx_tx, ctx.accounts.escrow_account.amount_b)?;
+        token::transfer(cpi_ctx_tx, ctx.accounts.escrow_account.amount_a)?;
         
         // Para cerrar la vault Account y devolver los lamports al maker
         let cpi_accounts_close = CloseAccount {
@@ -150,7 +152,7 @@ pub mod escrow {
         // ------------------------------------------------------------------------------------------------------------
         let cpi_accounts_close = CloseAccount {
             account: ctx.accounts.vault_account.to_account_info(),
-            destination: ctx.accounts.authority.to_account_info(),
+            destination: ctx.accounts.maker.to_account_info(),
             authority: ctx.accounts.escrow_account.to_account_info(),
         };
 
@@ -172,7 +174,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + 32 + 32 + 8 + 8 + 1 + 1,
+        space = 8 + 32 + 32 + 32 + 8 + 8 + 8 + 1 + 1,
         seeds = [
             b"escrow",
             id.to_le_bytes().as_ref(),
@@ -244,7 +246,7 @@ pub struct Exchange<'info> {
     #[account(
         mut,
         constraint = escrow_account.maker == *maker.key,
-        close = authority,
+        close = maker,
         seeds = [
             b"escrow",
             escrow_account.id.to_le_bytes().as_ref(),
@@ -287,7 +289,10 @@ pub struct Exchange<'info> {
     )]
     pub taker_token_account_b: Account<'info, TokenAccount>, 
 
-    #[account(mut)]  
+    #[account(
+        mut,
+        constraint = taker_token_account_a.mint == escrow_account.mint_a,
+    )]  
     pub taker_token_account_a: Account<'info, TokenAccount>,
 
     #[account(address = escrow_account.mint_b)]
@@ -299,8 +304,10 @@ pub struct Exchange<'info> {
 #[account]
 pub struct EscrowAccount {
     pub maker: Pubkey, // Almacenamos la pubkey del usuario que pone la oferta
+    pub mint_a: Pubkey,// Almacenamos el mint del TokenB que introduce el maker para poder comprobar que el taker realmente
     pub mint_b: Pubkey,// Almacenamos el mint del TokenB que introduce el maker para poder comprobar que el taker realmente
     // va intercambiar esos tokens, el mint es el identificador del token
+    pub amount_a: u64, // Almacenamos la cantidad que quiere el maker del tokenB para hacer comprobaciones
     pub amount_b: u64, // Almacenamos la cantidad que quiere el maker del tokenB para hacer comprobaciones
     pub id: u64, // Utilizo este número para las seeds del escrow
     pub escrow_bump: u8, 
