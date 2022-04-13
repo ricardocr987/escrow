@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, CloseAccount, Token, TokenAccount, Transfer, Mint };
+use borsh::{BorshDeserialize, BorshSerialize};
 
 declare_id!("D7ko992PKYLDKFy3fWCQsePvWF3Z7CmvoDHnViGf8bfm");
 
@@ -304,10 +305,10 @@ pub struct Exchange<'info> {
 #[account]
 pub struct EscrowAccount {
     pub maker: Pubkey, // Almacenamos la pubkey del usuario que pone la oferta
-    pub mint_a: Pubkey,// Almacenamos el mint del TokenB que introduce el maker para poder comprobar que el taker realmente
+    pub mint_a: Pubkey,// Almacenamos el mint del TokenA que introduce el maker para poder hacer comprobaciones
     pub mint_b: Pubkey,// Almacenamos el mint del TokenB que introduce el maker para poder comprobar que el taker realmente
     // va intercambiar esos tokens, el mint es el identificador del token
-    pub amount_a: u64, // Almacenamos la cantidad que quiere el maker del tokenB para hacer comprobaciones
+    pub amount_a: u64, // Almacenamos la cantidad que introduce el maker del tokenA
     pub amount_b: u64, // Almacenamos la cantidad que quiere el maker del tokenB para hacer comprobaciones
     pub id: u64, // Utilizo este número para las seeds del escrow
     pub escrow_bump: u8, 
