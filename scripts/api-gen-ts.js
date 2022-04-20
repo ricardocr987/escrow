@@ -1,7 +1,7 @@
 // @ts-check
 'use strict';
 
-const PROGRAM_NAME = 'escrow';
+const PROGRAM_NAME = 'switchboard_v2';
 const PROGRAM_ID = 'D7ko992PKYLDKFy3fWCQsePvWF3Z7CmvoDHnViGf8bfm';
 
 const path = require('path');
